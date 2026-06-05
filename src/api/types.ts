@@ -313,3 +313,41 @@ export interface SocketEnvelope<T> {
   data: T;
   ts: string;
 }
+
+export interface MarketOverviewResponse {
+  data: MarketOverviewItem[];
+  marketOpen: boolean;
+  cachedAt?: string;
+}
+
+// Market overview tile — one per underlying instrument
+export interface MarketOverviewItem {
+  symbol: string;
+  displayName: string;
+  instrumentKey: string;
+  assetClass: 'INDEX' | 'COMMODITY' | 'STOCK';
+  supportsOptions: boolean;
+  defaultLotSize: number;
+  ltp: number | null;
+  prevClose: number | null;
+  change: number | null;
+  changePct: number | null;
+}
+
+// Pushed by backend execution engine every 5s for each open position
+export interface PositionUpdate {
+  id: number;
+  symbol: string;
+  instrumentKey: string;
+  side: 'BUY' | 'SELL';
+  quantity: number;
+  entryPrice: number;
+  currentPrice: number;
+  unrealizedPnl: number;
+  unrealizedPnlPct: number;
+  stopLossPrice: number;
+  targetPrice: number;
+  trailActive: boolean;
+  bestPrice: number;
+  status: string;
+}

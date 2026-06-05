@@ -19,6 +19,30 @@ interface DataGridTableProps<T extends object> {
   getRowId?: GetRowIdFunc<T>;
 }
 
+// Concrete colors per mode — avoids CSS variable cascade conflicts from grid-skin-* classes
+const COLORS = {
+  dark: {
+    bg: '#13233b',
+    header: '#1f3150',
+    fg: '#e8edf9',
+    fgSoft: '#93a2bf',
+    border: '#29415f',
+    oddRow: '#162035',
+    selected: 'rgba(79,141,255,0.16)',
+    primary: '#4f8dff',
+  },
+  light: {
+    bg: '#ffffff',
+    header: '#edf2fb',
+    fg: '#11243d',
+    fgSoft: '#5d708e',
+    border: '#d8e2f2',
+    oddRow: '#f8fafd',
+    selected: 'rgba(0,88,216,0.16)',
+    primary: '#0058d8',
+  },
+};
+
 export const DataGridTable = <T extends object>({
   rows,
   columns,
@@ -28,7 +52,6 @@ export const DataGridTable = <T extends object>({
   height = 420,
   pagination = true,
   themeMode = 'light',
-  themeVariant = 'aurora',
   getRowId,
 }: DataGridTableProps<T>) => {
   const defaultColDef = useMemo<ColDef<T>>(
@@ -43,38 +66,39 @@ export const DataGridTable = <T extends object>({
     [],
   );
 
+  const c = themeMode === 'dark' ? COLORS.dark : COLORS.light;
+
+  const gridStyle = useMemo<CSSProperties>(
+    () => ({
+      height,
+      '--ag-font-family': "'Manrope', sans-serif",
+      '--ag-background-color': c.bg,
+      '--ag-foreground-color': c.fg,
+      '--ag-header-background-color': c.header,
+      '--ag-header-foreground-color': c.fgSoft,
+      '--ag-border-color': c.border,
+      '--ag-row-border-color': c.border,
+      '--ag-odd-row-background-color': c.oddRow,
+      '--ag-selected-row-background-color': c.selected,
+      '--ag-control-panel-background-color': c.bg,
+      '--ag-input-focus-border-color': c.primary,
+      '--ag-range-selection-border-color': c.primary,
+    }) as CSSProperties,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [height, themeMode],
+  );
+
   if (rows.length === 0) {
     return <div className="empty-state">{emptyMessage}</div>;
   }
 
   const shouldPaginate = pagination && rows.length > pageSize;
-  const gridStyle = useMemo(
-    () =>
-      ({
-        height,
-        '--ag-font-family': "'Manrope', sans-serif",
-        '--ag-background-color': 'var(--grid-bg)',
-        '--ag-foreground-color': 'var(--ink)',
-        '--ag-header-foreground-color': 'var(--ink-soft)',
-        '--ag-header-background-color': 'var(--grid-header)',
-        '--ag-border-color': 'var(--grid-border)',
-        '--ag-row-border-color': 'color-mix(in srgb, var(--grid-border) 75%, transparent)',
-        '--ag-selected-row-background-color': 'color-mix(in srgb, var(--primary) 16%, transparent)',
-        '--ag-odd-row-background-color': 'color-mix(in srgb, var(--grid-bg) 92%, var(--panel))',
-        '--ag-control-panel-background-color': 'var(--grid-bg)',
-        '--ag-input-focus-border-color': 'var(--primary)',
-        '--ag-range-selection-border-color': 'var(--primary)',
-      }) as CSSProperties,
-    [height, themeMode, themeVariant]
-  );
 
   return (
-      <div
-        className={`ag-grid-shell grid-skin-${themeVariant} ag-theme-quartz ${
-        themeMode === 'dark' ? 'ag-theme-quartz-dark' : ''
-       }`}
-        style={{ height }}
-      >
+    <div
+      className={`ag-grid-shell ${themeMode === 'dark' ? 'ag-theme-quartz-dark' : 'ag-theme-quartz'}`}
+      style={gridStyle}
+    >
       <AgGridReact<T>
         rowData={rows}
         columnDefs={columns}

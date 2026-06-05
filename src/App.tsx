@@ -1,12 +1,14 @@
 import { ColDef } from 'ag-grid-community';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { API_BASE_URL, getOAuthLoginUrl, tradingApi } from './api/client';
+import { API_BASE_URL, getMarketOverview, getOAuthLoginUrl, tradingApi } from './api/client';
 import {
   AccountSummary,
   AuthStatus,
   DailyReportRow,
+  MarketOverviewItem,
   MarketTick,
   OptionChain,
+  PositionUpdate,
   OrderCheckResult,
   PlaceOrderInput,
   ReportSummary,
@@ -20,7 +22,10 @@ import {
 } from './api/types';
 import { DataGridTable } from './components/data-grid-table';
 import { IntentApprovalModal } from './components/intent-approval-modal';
-import { OptionChainTable } from './components/option-chain-table';
+import { MarketOverviewBar } from './components/market-overview-bar';
+import { OptionChainTable, SelectedOption } from './components/option-chain-table';
+import { OptionInstrumentPanel } from './components/option-instrument-panel';
+import { LivePnlPanel } from './components/live-pnl-panel';
 import { OrderForm } from './components/order-form';
 import { OrderList } from './components/order-list';
 import { PositionTable } from './components/position-table';
@@ -159,6 +164,11 @@ const App = () => {
   const [orderCheck, setOrderCheck] = useState<OrderCheckResult | null>(null);
   const [dismissedIntentIds, setDismissedIntentIds] = useState<number[]>([]);
   const [chartMode, setChartMode] = useState<ChartMode>('line');
+  const [selectedOption, setSelectedOption] = useState<SelectedOption | null>(null);
+  const [marketOverview, setMarketOverview] = useState<MarketOverviewItem[]>([]);
+  const [marketOpen, setMarketOpen] = useState<boolean>(true);
+  // Symbol whose option chain + chart is currently displayed (defaults to active underlying)
+  const [viewingSymbol, setViewingSymbol] = useState<string>('NIFTY');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -185,6 +195,24 @@ const App = () => {
     setTickHistory(history);
     setOptionChain(chain);
   }, []);
+
+  // Switch viewing to a different index — load its option chain + chart
+  const handleOverviewSelect = useCallback(async (item: MarketOverviewItem) => {
+    setViewingSymbol(item.symbol);
+    setSelectedOption(null);
+    if (!authStatus.connected) return;
+    setBusy(true);
+    try {
+      const [chain, history] = await Promise.all([
+        tradingApi.getOptionChain({ refresh: true, symbol: item.symbol }).catch(() => null),
+        tradingApi.getMarketHistory({ limit: HISTORY_LIMIT, symbol: item.symbol }).catch(() => []),
+      ]);
+      if (chain) setOptionChain(chain);
+      if (history.length) setTickHistory(history as typeof tickHistory);
+    } catch { /* ignore */ } finally {
+      setBusy(false);
+    }
+  }, [authStatus.connected]);
 
   const refreshOrdersIntents = useCallback(async () => {
     const [ordersResult, intentsResult] = await Promise.all([
@@ -289,19 +317,90 @@ const App = () => {
       }
 
       setOptionChain(chain);
+
+      // Keep latestTick in sync when chain carries a fresher underlying price
+      if (chain.underlyingPrice != null) {
+        setLatestTick((prev) => {
+          if (!prev) return prev;
+          return { ...prev, ltp: chain.underlyingPrice as number, sourceTimestamp: chain.snapshotTime };
+        });
+      }
     },
     [activeUnderlying],
+  );
+
+  // WebSocket push: execution engine broadcasts position_update every 5s per open position.
+  // We merge the update directly into positions state — no HTTP poll needed.
+  const onPositionUpdate = useCallback(
+    (update: PositionUpdate) => {
+      setPositions((prev) =>
+        prev.map((p) => {
+          if (p.id !== update.id) return p;
+          return {
+            ...p,
+            currentPrice: update.currentPrice,
+            unrealizedPnl: update.unrealizedPnl,
+            stopLossPrice: update.stopLossPrice,
+            targetPrice: update.targetPrice,
+            trailActive: update.trailActive,
+            bestPrice: update.bestPrice,
+            status: update.status as 'OPEN' | 'CLOSED',
+          };
+        }),
+      );
+
+      // If position just closed, refresh full strategy status for trade count + daily PnL
+      if (update.status === 'CLOSED') {
+        void refreshStrategyData();
+      }
+    },
+    [refreshStrategyData],
   );
 
   const websocketStatus = useMarketStream({
     enabled: authStatus.connected,
     onTick,
     onOptionChain,
+    onPositionUpdate,
   });
 
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  // ── Market overview — batch LTP for all indices ──────────────────────────
+  // Polls every 5s when market is open; every 60s when closed (just to update status)
+  useEffect(() => {
+    if (!authStatus.connected) return;
+    let timer: ReturnType<typeof setInterval>;
+
+    const fetch = () => {
+      void getMarketOverview()
+        .then(({ items, marketOpen: open }) => {
+          setMarketOverview(items);
+          setMarketOpen(open);
+          // If market just opened/closed, reschedule at new interval
+          const ms = open ? 5_000 : 60_000;
+          clearInterval(timer);
+          timer = setInterval(fetch, ms);
+        })
+        .catch(() => {});
+    };
+
+    fetch();
+    timer = setInterval(fetch, marketOpen ? 5_000 : 60_000);
+    return () => clearInterval(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStatus.connected]);
+
+  // ── Strategy status (trade count, daily PnL) background refresh ─────────
+  // Positions are pushed via WebSocket (position_update) — no polling needed there.
+  // We still poll status every 30s to keep trade count + daily PnL accurate when flat.
+  useEffect(() => {
+    if (!authStatus.connected) return;
+    const timer = setInterval(() => { void refreshStrategyData(); }, 30_000);
+    return () => clearInterval(timer);
+  }, [authStatus.connected, refreshStrategyData]);
 
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
@@ -843,8 +942,32 @@ const App = () => {
     [],
   );
 
-  const renderDashboard = () => (
+  const renderDashboard = () => {
+    const viewingItem = marketOverview.find((m) => m.symbol === viewingSymbol) ?? null;
+    const viewingDisplayName = viewingItem?.displayName ?? viewingSymbol;
+    return (
     <>
+      {/* ── Market Overview Tiles ── */}
+      {marketOverview.length > 0 && (
+        <section>
+          <div className="market-overview-header">
+            <span className="market-overview-title">Markets</span>
+            <span className={`market-status-badge ${marketOpen ? 'market-open' : 'market-closed'}`}>
+              {marketOpen ? '● Live' : '● Closed'}
+            </span>
+            {!marketOpen && (
+              <span className="market-closed-hint">NSE closed · showing last traded prices</span>
+            )}
+          </div>
+          <MarketOverviewBar
+            items={marketOverview}
+            selectedSymbol={viewingSymbol}
+            onSelect={(item) => { void handleOverviewSelect(item); }}
+            themeMode={gridThemeMode}
+          />
+        </section>
+      )}
+
       <section className="metrics-grid metrics-grid-4">
         <div className="metric-card">
           <p className="metric-label">Connection</p>
@@ -881,21 +1004,40 @@ const App = () => {
       <section>
         <PriceChart
           ticks={tickHistory}
-          title={`${activeUnderlying?.displayName ?? 'Market'} Chart`}
+          title={`${viewingDisplayName} Chart`}
           mode={chartMode}
           onModeChange={setChartMode}
         />
       </section>
 
       <section>
-        <OptionChainTable chain={optionChain} themeMode={gridThemeMode} />
+        <OptionChainTable
+          chain={optionChain}
+          spotPrice={latestTick?.ltp ?? optionChain?.underlyingPrice}
+          themeMode={gridThemeMode}
+          onSelectOption={setSelectedOption}
+        />
+        {selectedOption && (
+          <OptionInstrumentPanel
+            option={selectedOption}
+            chainSymbol={optionChain?.symbol ?? activeUnderlying?.symbol ?? 'NIFTY'}
+            onClose={() => setSelectedOption(null)}
+          />
+        )}
       </section>
+
+      {positions.filter((p) => p.status === 'OPEN').length > 0 && (
+        <section>
+          <LivePnlPanel positions={positions} onClosePosition={closePosition} busy={busy} />
+        </section>
+      )}
 
       <section>
         <StrategyPanel status={strategyStatus} onToggle={toggleStrategy} onEvaluate={evaluateStrategy} busy={busy} />
       </section>
     </>
-  );
+    );
+  };
 
   const renderOrders = () => (
     <>
@@ -1292,6 +1434,7 @@ const App = () => {
         <IntentApprovalModal
           intent={pendingIntent}
           busy={busy}
+          isPaperMode={true}
           onApprove={approveIntent}
           onReject={rejectIntent}
           onClose={() => {

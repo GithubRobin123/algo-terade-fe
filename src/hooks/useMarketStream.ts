@@ -1,14 +1,15 @@
 ﻿import { useEffect, useRef, useState } from 'react';
 import { WS_URL } from '../api/client';
-import { MarketTick, OptionChain, SocketEnvelope } from '../api/types';
+import { MarketTick, OptionChain, PositionUpdate, SocketEnvelope } from '../api/types';
 
 interface UseMarketStreamParams {
   enabled: boolean;
   onTick: (tick: MarketTick) => void;
   onOptionChain?: (chain: OptionChain) => void;
+  onPositionUpdate?: (update: PositionUpdate) => void;
 }
 
-export const useMarketStream = ({ enabled, onTick, onOptionChain }: UseMarketStreamParams) => {
+export const useMarketStream = ({ enabled, onTick, onOptionChain, onPositionUpdate }: UseMarketStreamParams) => {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'open' | 'closed' | 'error'>('idle');
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -40,6 +41,10 @@ export const useMarketStream = ({ enabled, onTick, onOptionChain }: UseMarketStr
         if (message.event === 'option_chain' && onOptionChain) {
           onOptionChain(message.data as OptionChain);
         }
+
+        if (message.event === 'position_update' && onPositionUpdate) {
+          onPositionUpdate(message.data as PositionUpdate);
+        }
       } catch {
         // Ignore malformed messages from the socket stream.
       }
@@ -57,7 +62,7 @@ export const useMarketStream = ({ enabled, onTick, onOptionChain }: UseMarketStr
       socket.close();
       socketRef.current = null;
     };
-  }, [enabled, onOptionChain, onTick]);
+  }, [enabled, onOptionChain, onPositionUpdate, onTick]);
 
   return status;
 };

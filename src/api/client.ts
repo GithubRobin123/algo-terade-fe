@@ -4,6 +4,7 @@ import {
   ApiResponse,
   AuthStatus,
   DailyReportRow,
+  MarketOverviewItem,
   MarketTick,
   OptionChain,
   OrderCheckResult,
@@ -21,13 +22,23 @@ import {
 
 const normalizeBaseUrl = (url: string): string => url.replace(/\/$/, '');
 
-export const API_BASE_URL = normalizeBaseUrl(
-  import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000',
-);
+// When VITE_API_BASE_URL is empty/unset the Vite dev-server proxy handles /api routing,
+// so we use '' (same-origin). In production set this to the actual backend URL.
+const rawApiBase = import.meta.env.VITE_API_BASE_URL as string | undefined;
+export const API_BASE_URL = rawApiBase ? normalizeBaseUrl(rawApiBase) : '';
 
-export const WS_URL =
-  import.meta.env.VITE_WS_URL ??
-  API_BASE_URL.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/ws';
+// WebSocket URL derivation — no hardcoded hosts:
+//  1. VITE_WS_URL set → use it directly
+//  2. VITE_API_BASE_URL set → derive ws(s):// from it
+//  3. Dev proxy mode (both empty) → derive from current page origin (works on any host/port)
+const rawWsUrl = import.meta.env.VITE_WS_URL as string | undefined;
+export const WS_URL = rawWsUrl
+  ? rawWsUrl
+  : API_BASE_URL
+    ? API_BASE_URL.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/ws'
+    : (typeof window !== 'undefined'
+        ? window.location.origin.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
+        : '') + '/ws';
 
 const client = axios.create({
   baseURL: API_BASE_URL,
@@ -178,10 +189,27 @@ export const tradingApi = {
   closeStrategyPosition: async (id: number, reason?: string): Promise<StrategyPosition> => {
     const response = await client.post<ApiResponse<StrategyPosition>>(
       `/api/strategy/positions/${id}/close`,
-      {
-        reason,
-      },
+      { reason },
     );
+    return unwrap(response);
+  },
+
+  /**
+   * EMERGENCY PANIC BUTTON — closes ALL open positions immediately.
+   * Disables strategy engine. Cancels all pending broker orders.
+   */
+  emergencyExitAll: async (triggeredBy?: string): Promise<{
+    message: string;
+    closedCount: number;
+    failedCount: number;
+    errors: string[];
+  }> => {
+    const response = await client.post<ApiResponse<{
+      message: string;
+      closedCount: number;
+      failedCount: number;
+      errors: string[];
+    }>>('/api/strategy/emergency-exit', { triggeredBy: triggeredBy ?? 'UI' });
     return unwrap(response);
   },
 
@@ -267,6 +295,18 @@ export const tradingApi = {
     });
     return unwrap(response);
   },
+};
+
+export const getMarketOverview = async (): Promise<{ items: MarketOverviewItem[]; marketOpen: boolean }> => {
+  const response = await client.get<{ success: boolean; data: MarketOverviewItem[]; marketOpen: boolean }>('/api/market/overview');
+  return { items: response.data.data ?? [], marketOpen: response.data.marketOpen ?? true };
+};
+
+export const getInstrumentLtp = async (instrumentKey: string): Promise<{ instrumentKey: string; symbol: string; ltp: number; sourceTimestamp: string }> => {
+  const response = await client.get<ApiResponse<{ instrumentKey: string; symbol: string; ltp: number; sourceTimestamp: string }>>('/api/market/instrument/ltp', {
+    params: { instrumentKey },
+  });
+  return unwrap(response);
 };
 
 export const getOAuthLoginUrl = (): string => `${API_BASE_URL}/api/auth/upstox/login`;

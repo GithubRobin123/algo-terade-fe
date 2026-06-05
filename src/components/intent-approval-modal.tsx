@@ -4,6 +4,7 @@ import { formatPrice } from '../lib/format';
 interface IntentApprovalModalProps {
   intent: TradeIntent | null;
   busy?: boolean;
+  isPaperMode?: boolean;
   onApprove: (intent: TradeIntent) => Promise<void>;
   onReject: (intent: TradeIntent) => Promise<void>;
   onClose: () => void;
@@ -12,6 +13,7 @@ interface IntentApprovalModalProps {
 export const IntentApprovalModal = ({
   intent,
   busy = false,
+  isPaperMode = true,
   onApprove,
   onReject,
   onClose,
@@ -23,7 +25,12 @@ export const IntentApprovalModal = ({
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal-card">
-        <h3>Trade Approval Required</h3>
+        <div className="modal-header-row">
+          <h3>Trade Approval Required</h3>
+          {isPaperMode && (
+            <span className="paper-badge">PAPER TRADE</span>
+          )}
+        </div>
         <p className="modal-subtitle">
           Source: {intent.source} | Confidence: {intent.confidence !== null ? intent.confidence.toFixed(2) : '--'}
         </p>
@@ -35,27 +42,29 @@ export const IntentApprovalModal = ({
         <p>Price: {formatPrice(intent.price)}</p>
         {intent.rationale ? <p>Rationale: {intent.rationale}</p> : null}
 
+        {isPaperMode && (
+          <p className="paper-mode-notice">
+            Simulated trade — no real order will be sent to Upstox. P&amp;L tracked internally.
+          </p>
+        )}
+
         <div className="modal-actions">
           <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
             Later
           </button>
           <button
             className="btn btn-sell"
-            onClick={() => {
-              void onReject(intent);
-            }}
+            onClick={() => { void onReject(intent); }}
             disabled={busy}
           >
             Reject
           </button>
           <button
             className="btn btn-buy"
-            onClick={() => {
-              void onApprove(intent);
-            }}
+            onClick={() => { void onApprove(intent); }}
             disabled={busy}
           >
-            Approve & Execute
+            {isPaperMode ? 'Simulate Trade' : 'Approve & Execute'}
           </button>
         </div>
       </div>
