@@ -4,6 +4,7 @@ import {
   ApiResponse,
   AuthStatus,
   DailyReportRow,
+  DecisionLogEntry,
   MarketOverviewItem,
   MarketTick,
   OptionChain,
@@ -14,8 +15,10 @@ import {
   StockCatalogItem,
   StrategyPosition,
   StrategyStatus,
+  TradeHistoryEntry,
   TradeIntent,
   TradeOrder,
+  TradeSummaryStats,
   UnderlyingInstrument,
   WatchlistItem,
 } from './types';
@@ -293,6 +296,21 @@ export const tradingApi = {
     const response = await client.get<ApiResponse<DailyReportRow[]>>('/api/reports/daily', {
       params: { days },
     });
+    return unwrap(response);
+  },
+
+  getTradeHistory: async (params?: { days?: number; status?: 'OPEN' | 'CLOSED' | 'ALL' }): Promise<TradeHistoryEntry[]> => {
+    const response = await client.get<ApiResponse<TradeHistoryEntry[]>>('/api/trades/history', { params });
+    return unwrap(response);
+  },
+
+  getDecisionLog: async (params?: { days?: number; decision?: string }): Promise<DecisionLogEntry[]> => {
+    const response = await client.get<ApiResponse<DecisionLogEntry[]>>('/api/trades/decisions', { params });
+    return unwrap(response);
+  },
+
+  getTradeSummary: async (days = 30): Promise<TradeSummaryStats> => {
+    const response = await client.get<ApiResponse<TradeSummaryStats>>('/api/trades/summary', { params: { days } });
     return unwrap(response);
   },
 };

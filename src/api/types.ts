@@ -335,6 +335,69 @@ export interface MarketOverviewItem {
 }
 
 // Pushed by backend execution engine every 5s for each open position
+export interface TradeHistoryEntry {
+  id: number;
+  openedAt: string;
+  closedAt: string | null;
+  strategy: string | null;
+  optionType: string | null;
+  strikePrice: number | null;
+  symbol: string;
+  instrumentKey: string;
+  side: 'BUY' | 'SELL';
+  quantity: number;
+  entryPrice: number;
+  exitPrice: number | null;
+  stopLossPrice: number;
+  targetPrice: number;
+  exitReason: string | null;
+  realizedPnl: number | null;
+  pnlPct: number | null;
+  confidence: number | null;
+  rationale: string | null;
+  status: 'OPEN' | 'CLOSED';
+  trailActive: boolean;
+  bestPrice: number;
+  indexPriceAtEntry: number | null;
+  ruleSignals: string[] | null;
+  decisionLogId: number | null;
+}
+
+export interface DecisionLogEntry {
+  id: number;
+  timestamp: string;
+  underlying: string;
+  indexPrice: number | null;
+  decision: 'ACCEPTED' | 'REJECTED' | 'FAILED';
+  rejectionCategory: string | null;
+  rejectionReason: string | null;
+  strategy: string | null;
+  optionType: string | null;
+  strikePrice: number | null;
+  entryPremium: number | null;
+  stopLossPrice: number | null;
+  targetPrice: number | null;
+  confidence: number | null;
+  rationale: string | null;
+  latencyMs: number | null;
+  tradeOfDay: number | null;
+}
+
+export interface TradeSummaryStats {
+  totalTrades: number;
+  openTrades: number;
+  closedTrades: number;
+  wins: number;
+  losses: number;
+  winRatePct: number;
+  totalRealizedPnl: number;
+  avgWin: number;
+  avgLoss: number;
+  strategyBreakdown: Record<string, { trades: number; pnl: number; wins: number }>;
+  exitReasonBreakdown: Record<string, number>;
+  decisionBreakdown: Record<string, number>;
+}
+
 export interface PositionUpdate {
   id: number;
   symbol: string;

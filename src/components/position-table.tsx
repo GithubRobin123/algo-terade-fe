@@ -1,7 +1,7 @@
 import { ColDef } from 'ag-grid-community';
 import { useMemo } from 'react';
 import { StrategyPosition } from '../api/types';
-import { formatNumber, formatPrice } from '../lib/format';
+import { formatNumber, formatOptionLabel, formatPrice } from '../lib/format';
 import { DataGridTable } from './data-grid-table';
 
 interface PositionTableProps {
@@ -19,7 +19,36 @@ export const PositionTable = ({
 }: PositionTableProps) => {
   const columns = useMemo<ColDef<StrategyPosition>[]>(
     () => [
-      { headerName: 'Symbol', field: 'symbol', minWidth: 130 },
+      {
+        headerName: 'Option',
+        minWidth: 160,
+        valueGetter: (params) => {
+          if (!params.data) return '';
+          const meta = params.data.metadata as Record<string, unknown>;
+          return formatOptionLabel(params.data.symbol, meta);
+        },
+        tooltipValueGetter: (params) => params.data?.instrumentKey ?? '',
+      },
+      {
+        headerName: 'Strike',
+        minWidth: 90,
+        valueGetter: (params) => {
+          if (!params.data) return null;
+          const meta = params.data.metadata as Record<string, unknown>;
+          return (meta?.['strike'] as number | undefined) ?? null;
+        },
+        valueFormatter: (params) => params.value != null ? String(params.value) : '—',
+      },
+      {
+        headerName: 'Index @Entry',
+        minWidth: 120,
+        valueGetter: (params) => {
+          if (!params.data) return null;
+          const meta = params.data.metadata as Record<string, unknown>;
+          return (meta?.['indexLtp'] as number | undefined) ?? null;
+        },
+        valueFormatter: (params) => params.value != null ? formatPrice(params.value as number) : '—',
+      },
       { headerName: 'Qty', field: 'quantity', minWidth: 90 },
       {
         headerName: 'Entry',

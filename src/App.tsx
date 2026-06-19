@@ -5,6 +5,7 @@ import {
   AccountSummary,
   AuthStatus,
   DailyReportRow,
+  DecisionLogEntry,
   MarketOverviewItem,
   MarketTick,
   OptionChain,
@@ -15,8 +16,10 @@ import {
   StockCatalogItem,
   StrategyPosition,
   StrategyStatus,
+  TradeHistoryEntry,
   TradeIntent,
   TradeOrder,
+  TradeSummaryStats,
   UnderlyingInstrument,
   WatchlistItem,
 } from './api/types';
@@ -33,13 +36,13 @@ import { ChartMode, PriceChart } from './components/price-chart';
 import { StatusPill } from './components/status-pill';
 import { StrategyPanel } from './components/strategy-panel';
 import { useMarketStream } from './hooks/useMarketStream';
-import { formatDateTime, formatNumber, formatPrice } from './lib/format';
+import { formatDateTime, formatNumber, formatPrice, formatTradeOptionLabel } from './lib/format';
 
 const HISTORY_LIMIT = 300;
 const THEME_STORAGE_KEY = 'upstox-dashboard-theme';
 const SIDEBAR_STORAGE_KEY = 'upstox-dashboard-sidebar-collapsed';
 
-type PageKey = 'dashboard' | 'orders' | 'watchlist' | 'stocks' | 'wallet' | 'reports';
+type PageKey = 'dashboard' | 'orders' | 'watchlist' | 'stocks' | 'wallet' | 'reports' | 'trades';
 type ThemeKey = 'aurora' | 'midnight' | 'sunset';
 
 type HoldingRow = AccountSummary['holdings'][number];
@@ -48,6 +51,7 @@ type PositionRow = AccountSummary['positions'][number];
 const pages: Array<{ key: PageKey; label: string; short: string; hint: string }> = [
   { key: 'dashboard', label: 'Dashboard', short: 'DB', hint: 'Live market and strategy' },
   { key: 'orders', label: 'Orders', short: 'OR', hint: 'Intents and executions' },
+  { key: 'trades', label: 'Trade Log', short: 'TL', hint: 'History, reasons & decisions' },
   { key: 'watchlist', label: 'Watchlist', short: 'WL', hint: 'Track and curate symbols' },
   { key: 'stocks', label: 'Stocks', short: 'ST', hint: 'Instrument universe' },
   { key: 'wallet', label: 'Wallet', short: 'WA', hint: 'Funds, holdings, positions' },
@@ -163,6 +167,13 @@ const App = () => {
   const [dailyReport, setDailyReport] = useState<DailyReportRow[]>([]);
   const [orderCheck, setOrderCheck] = useState<OrderCheckResult | null>(null);
   const [dismissedIntentIds, setDismissedIntentIds] = useState<number[]>([]);
+  const [tradeHistory, setTradeHistory] = useState<TradeHistoryEntry[]>([]);
+  const [decisionLog, setDecisionLog] = useState<DecisionLogEntry[]>([]);
+  const [tradeSummary, setTradeSummary] = useState<TradeSummaryStats | null>(null);
+  const [tradeHistoryDays, setTradeHistoryDays] = useState<number>(30);
+  const [tradeLogTab, setTradeLogTab] = useState<'history' | 'decisions' | 'daily-pnl'>('history');
+  const [dailyPnlPage, setDailyPnlPage] = useState(0);
+  const [tradeDecisionFilter, setTradeDecisionFilter] = useState<string>('ALL');
   const [chartMode, setChartMode] = useState<ChartMode>('line');
   const [selectedOption, setSelectedOption] = useState<SelectedOption | null>(null);
   const [marketOverview, setMarketOverview] = useState<MarketOverviewItem[]>([]);
@@ -254,6 +265,17 @@ const App = () => {
     setAccountSummary(asFallback(accountResult, null));
     setReportSummary(asFallback(summaryResult, null));
     setDailyReport(asFallback(dailyResult, []));
+  }, []);
+
+  const refreshTradeHistory = useCallback(async (days: number, decisionFilter: string) => {
+    const [historyResult, decisionsResult, summaryResult] = await Promise.allSettled([
+      tradingApi.getTradeHistory({ days, status: 'ALL' }),
+      tradingApi.getDecisionLog({ days: Math.min(days, 30), decision: decisionFilter === 'ALL' ? undefined : decisionFilter }),
+      tradingApi.getTradeSummary(days),
+    ]);
+    setTradeHistory(asFallback(historyResult, []));
+    setDecisionLog(asFallback(decisionsResult, []));
+    setTradeSummary(asFallback(summaryResult, null));
   }, []);
 
   const loadDashboard = useCallback(
@@ -415,6 +437,13 @@ const App = () => {
   }, [page]);
 
   useEffect(() => {
+    if (page === 'trades') {
+      void refreshTradeHistory(tradeHistoryDays, tradeDecisionFilter);
+      setDailyPnlPage(0);
+    }
+  }, [page, tradeHistoryDays, tradeDecisionFilter, refreshTradeHistory]);
+
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const oauthStatus = params.get('oauth');
     const oauthMessage = params.get('message');
@@ -476,6 +505,22 @@ const App = () => {
     () => intents.filter((item) => item.status === 'PENDING_APPROVAL').length,
     [intents],
   );
+
+  const dayWisePnl = useMemo(() => {
+    type DayRow = { date: string; trades: number; wins: number; losses: number; pnl: number; winPct: number };
+    const map = new Map<string, DayRow>();
+    for (const t of tradeHistory) {
+      if (t.status !== 'CLOSED' || t.realizedPnl === null || !t.closedAt) continue;
+      const day = new Date(t.closedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      const row: DayRow = map.get(day) ?? { date: day, trades: 0, wins: 0, losses: 0, pnl: 0, winPct: 0 };
+      row.trades += 1;
+      row.pnl += Number(t.realizedPnl);
+      if (Number(t.realizedPnl) > 0) row.wins += 1; else row.losses += 1;
+      row.winPct = row.trades ? (row.wins / row.trades) * 100 : 0;
+      map.set(day, row);
+    }
+    return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+  }, [tradeHistory]);
 
   const preferredInstrumentKey = useMemo(() => {
     if (!optionChain || optionChain.rows.length === 0) {
@@ -1265,9 +1310,366 @@ const App = () => {
     </>
   );
 
+  const renderTrades = () => {
+    const pnlColor = (v: number | null) => {
+      if (v === null) return '';
+      return v >= 0 ? 'side-buy' : 'side-sell';
+    };
+
+    const DAILY_PNL_PAGE_SIZE = 10;
+
+    const exitReasonLabel = (r: string | null) => {
+      if (!r) return '—';
+      if (r === 'STOP_LOSS_HIT') return 'SL Hit';
+      if (r === 'TARGET_HIT') return 'Target Hit';
+      if (r === 'EOD_SQUAREOFF') return 'EOD Close';
+      if (r === 'EOD_SQUAREOFF_FORCED') return 'EOD Forced';
+      if (r.startsWith('TECH_REVERSAL')) return 'Tech Reversal';
+      if (r.startsWith('EMERGENCY_EXIT')) return 'Emergency Exit';
+      return r;
+    };
+
+    const decisionColor = (d: string) => {
+      if (d === 'ACCEPTED') return 'side-buy';
+      if (d === 'REJECTED') return 'side-sell';
+      return '';
+    };
+
+    const tradeHistoryColDefs: ColDef<TradeHistoryEntry>[] = [
+      { headerName: 'Date', field: 'openedAt', width: 140, valueFormatter: (p) => p.value ? new Date(p.value as string).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—' },
+      { headerName: 'Strategy', field: 'strategy', width: 150, valueFormatter: (p) => (p.value as string | null) ?? '—' },
+      {
+        headerName: 'Option',
+        width: 160,
+        valueGetter: (p) => p.data ? formatTradeOptionLabel(p.data.symbol, p.data.strikePrice, p.data.optionType) : '—',
+        tooltipValueGetter: (p) => p.data?.instrumentKey ?? '',
+      },
+      { headerName: 'Strike', field: 'strikePrice', width: 80, valueFormatter: (p) => p.value != null ? String(p.value) : '—' },
+      { headerName: 'Type', field: 'optionType', width: 70, valueFormatter: (p) => { const v = p.value as string | null; return v === 'CALL' ? 'CE' : v === 'PUT' ? 'PE' : (v ?? '—'); } },
+      { headerName: 'Entry ₹', field: 'entryPrice', width: 90, valueFormatter: (p) => `₹${Number(p.value).toFixed(1)}` },
+      { headerName: 'Exit ₹', field: 'exitPrice', width: 90, valueFormatter: (p) => p.value != null ? `₹${Number(p.value).toFixed(1)}` : '—' },
+      { headerName: 'SL ₹', field: 'stopLossPrice', width: 90, valueFormatter: (p) => `₹${Number(p.value).toFixed(1)}` },
+      { headerName: 'Target ₹', field: 'targetPrice', width: 90, valueFormatter: (p) => `₹${Number(p.value).toFixed(1)}` },
+      { headerName: 'P&L ₹', field: 'realizedPnl', width: 100, cellClass: (p) => pnlColor(p.value as number | null), valueFormatter: (p) => p.value != null ? `₹${Number(p.value).toFixed(0)}` : '—' },
+      { headerName: 'P&L %', field: 'pnlPct', width: 85, cellClass: (p) => pnlColor(p.value as number | null), valueFormatter: (p) => p.value != null ? `${Number(p.value).toFixed(1)}%` : '—' },
+      { headerName: 'Exit Reason', field: 'exitReason', width: 130, valueFormatter: (p) => exitReasonLabel(p.value as string | null) },
+      { headerName: 'Status', field: 'status', width: 80 },
+      { headerName: 'Trail', field: 'trailActive', width: 65, valueFormatter: (p) => (p.value as boolean) ? 'Yes' : 'No' },
+      { headerName: 'Confidence', field: 'confidence', width: 100, valueFormatter: (p) => p.value != null ? `${(Number(p.value) * 100).toFixed(0)}%` : '—' },
+      { headerName: 'Index Price', field: 'indexPriceAtEntry', width: 105, valueFormatter: (p) => p.value != null ? String(p.value) : '—' },
+      { headerName: 'Rationale', field: 'rationale', width: 320, tooltipField: 'rationale' },
+    ];
+
+    const decisionColDefs: ColDef<DecisionLogEntry>[] = [
+      { headerName: 'Time', field: 'timestamp', width: 140, valueFormatter: (p) => p.value ? new Date(p.value as string).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—' },
+      { headerName: 'Decision', field: 'decision', width: 100, cellClass: (p) => decisionColor(p.value as string) },
+      { headerName: 'Category', field: 'rejectionCategory', width: 150, valueFormatter: (p) => (p.value as string | null) ?? '—' },
+      { headerName: 'Strategy', field: 'strategy', width: 150, valueFormatter: (p) => (p.value as string | null) ?? '—' },
+      {
+        headerName: 'Option',
+        width: 140,
+        valueGetter: (p) => {
+          if (!p.data) return '—';
+          const underlying = p.data.underlying ?? '';
+          const strike = p.data.strikePrice;
+          const type = p.data.optionType;
+          if (strike && type) {
+            const shortType = type === 'CALL' ? 'CE' : type === 'PUT' ? 'PE' : type;
+            return `${underlying} ${strike} ${shortType}`;
+          }
+          return underlying || '—';
+        },
+      },
+      { headerName: 'Strike', field: 'strikePrice', width: 80, valueFormatter: (p) => p.value != null ? String(p.value) : '—' },
+      { headerName: 'Premium ₹', field: 'entryPremium', width: 100, valueFormatter: (p) => p.value != null ? `₹${Number(p.value).toFixed(1)}` : '—' },
+      { headerName: 'SL ₹', field: 'stopLossPrice', width: 90, valueFormatter: (p) => p.value != null ? `₹${Number(p.value).toFixed(1)}` : '—' },
+      { headerName: 'Target ₹', field: 'targetPrice', width: 95, valueFormatter: (p) => p.value != null ? `₹${Number(p.value).toFixed(1)}` : '—' },
+      { headerName: 'Confidence', field: 'confidence', width: 100, valueFormatter: (p) => p.value != null ? `${(Number(p.value) * 100).toFixed(0)}%` : '—' },
+      { headerName: 'Index LTP', field: 'indexPrice', width: 100, valueFormatter: (p) => p.value != null ? String(p.value) : '—' },
+      { headerName: '#', field: 'tradeOfDay', width: 50, valueFormatter: (p) => p.value != null ? String(p.value) : '—' },
+      { headerName: 'Latency ms', field: 'latencyMs', width: 100, valueFormatter: (p) => p.value != null ? `${p.value}ms` : '—' },
+      { headerName: 'Reason', field: 'rejectionReason', width: 340, tooltipField: 'rejectionReason' },
+    ];
+
+    const sb = tradeSummary?.strategyBreakdown ?? {};
+    const eb = tradeSummary?.exitReasonBreakdown ?? {};
+
+    return (
+      <>
+        {/* ── Summary row ── */}
+        <section className="metrics-grid">
+          <div className="metric-card">
+            <p className="metric-label">Total Trades</p>
+            <h2>{tradeSummary?.totalTrades ?? 0}</h2>
+            <p className="metric-meta">Open: {tradeSummary?.openTrades ?? 0} · Closed: {tradeSummary?.closedTrades ?? 0}</p>
+          </div>
+          <div className="metric-card">
+            <p className="metric-label">Win Rate</p>
+            <h2 className={tradeSummary && tradeSummary.winRatePct >= 50 ? 'side-buy' : 'side-sell'}>
+              {tradeSummary ? `${tradeSummary.winRatePct.toFixed(1)}%` : '—'}
+            </h2>
+            <p className="metric-meta">W: {tradeSummary?.wins ?? 0} · L: {tradeSummary?.losses ?? 0}</p>
+          </div>
+          <div className="metric-card">
+            <p className="metric-label">Realized P&L</p>
+            <h2 className={pnlColor(tradeSummary?.totalRealizedPnl ?? null)}>
+              {tradeSummary ? `₹${tradeSummary.totalRealizedPnl.toFixed(0)}` : '—'}
+            </h2>
+            <p className="metric-meta">
+              Avg Win: ₹{tradeSummary ? tradeSummary.avgWin.toFixed(0) : '—'} · Avg Loss: ₹{tradeSummary ? tradeSummary.avgLoss.toFixed(0) : '—'}
+            </p>
+          </div>
+          <div className="metric-card">
+            <p className="metric-label">Strategy Breakdown</p>
+            <div style={{ fontSize: '0.78rem', marginTop: '4px' }}>
+              {Object.keys(sb).length === 0
+                ? <span className="metric-meta">No closed trades yet</span>
+                : Object.entries(sb).map(([name, s]) => (
+                    <div key={name} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                      <span>{name}</span>
+                      <span className={s.pnl >= 0 ? 'side-buy' : 'side-sell'}>
+                        {s.trades}T · ₹{s.pnl.toFixed(0)} · {s.trades ? `${((s.wins / s.trades) * 100).toFixed(0)}%W` : '—'}
+                      </span>
+                    </div>
+                  ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── Exit reason summary ── */}
+        {Object.keys(eb).length > 0 && (
+          <section className="panel" style={{ marginBottom: '8px' }}>
+            <div className="panel-title-row">
+              <h3>Exit Reason Breakdown</h3>
+              <span>{tradeSummary?.closedTrades ?? 0} closed trades</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '8px 0' }}>
+              {Object.entries(eb).map(([reason, count]) => (
+                <span key={reason} className="metric-meta" style={{ background: 'var(--surface-2, #f0f0f0)', padding: '4px 10px', borderRadius: '4px' }}>
+                  {exitReasonLabel(reason)}: <strong>{count}</strong>
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── Filters ── */}
+        <section className="panel">
+          <div className="panel-title-row">
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                className={`btn ${tradeLogTab === 'history' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setTradeLogTab('history')}
+              >
+                Trade History
+              </button>
+              <button
+                className={`btn ${tradeLogTab === 'decisions' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setTradeLogTab('decisions')}
+              >
+                Decision Log
+              </button>
+              <button
+                className={`btn ${tradeLogTab === 'daily-pnl' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setTradeLogTab('daily-pnl')}
+              >
+                Daily P&L
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              {tradeLogTab === 'decisions' && (
+                <select
+                  value={tradeDecisionFilter}
+                  onChange={(e) => setTradeDecisionFilter(e.target.value)}
+                  style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border, #ccc)' }}
+                >
+                  <option value="ALL">All Decisions</option>
+                  <option value="ACCEPTED">Accepted Only</option>
+                  <option value="REJECTED">Rejected Only</option>
+                  <option value="FAILED">Failed Only</option>
+                </select>
+              )}
+              {[7, 30, 90].map((d) => (
+                <button
+                  key={d}
+                  className={`btn ${tradeHistoryDays === d ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setTradeHistoryDays(d)}
+                >
+                  {d}d
+                </button>
+              ))}
+              <button
+                className="btn btn-secondary"
+                onClick={() => void refreshTradeHistory(tradeHistoryDays, tradeDecisionFilter)}
+                disabled={busy}
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {tradeLogTab === 'history' ? (
+            <>
+              <div className="panel-title-row" style={{ paddingTop: '8px' }}>
+                <h3>Executed Trades</h3>
+                <span>{tradeHistory.length} records · last {tradeHistoryDays}d</span>
+              </div>
+              <DataGridTable<TradeHistoryEntry>
+                rows={tradeHistory}
+                columns={tradeHistoryColDefs}
+                emptyMessage="No trades found for the selected period."
+                themeMode={gridThemeMode}
+                height={520}
+                pageSize={15}
+                getRowId={(params) => String(params.data.id)}
+              />
+            </>
+          ) : tradeLogTab === 'decisions' ? (
+            <>
+              <div className="panel-title-row" style={{ paddingTop: '8px' }}>
+                <h3>Strategy Decision Log</h3>
+                <span>{decisionLog.length} entries · last {Math.min(tradeHistoryDays, 30)}d</span>
+              </div>
+              <p className="metric-meta" style={{ marginBottom: '8px' }}>
+                Every strategy evaluation cycle is logged here — ACCEPTED trades, REJECTED signals, and FAILED evaluations with their reasons.
+              </p>
+              <DataGridTable<DecisionLogEntry>
+                rows={decisionLog}
+                columns={decisionColDefs}
+                emptyMessage="No decision log entries found."
+                themeMode={gridThemeMode}
+                height={520}
+                pageSize={15}
+                getRowId={(params) => String(params.data.id)}
+              />
+            </>
+          ) : (
+            (() => {
+              const totalDayPages = Math.ceil(dayWisePnl.length / DAILY_PNL_PAGE_SIZE);
+              const safePage = Math.min(dailyPnlPage, Math.max(0, totalDayPages - 1));
+              const pageRows = dayWisePnl.slice(safePage * DAILY_PNL_PAGE_SIZE, (safePage + 1) * DAILY_PNL_PAGE_SIZE);
+              const totalPnl = dayWisePnl.reduce((s, r) => s + r.pnl, 0);
+              const totalTrades = dayWisePnl.reduce((s, r) => s + r.trades, 0);
+              const totalWins = dayWisePnl.reduce((s, r) => s + r.wins, 0);
+              const totalLosses = dayWisePnl.reduce((s, r) => s + r.losses, 0);
+              const overallWinPct = totalTrades ? (totalWins / totalTrades) * 100 : 0;
+
+              return (
+                <>
+                  <div className="panel-title-row" style={{ paddingTop: '8px' }}>
+                    <h3>Day-wise Realized P&L</h3>
+                    <span>{dayWisePnl.length} trading day{dayWisePnl.length !== 1 ? 's' : ''} · last {tradeHistoryDays}d</span>
+                  </div>
+                  <p className="metric-meta" style={{ marginBottom: '8px' }}>
+                    Grouped by IST date of position close. Showing {DAILY_PNL_PAGE_SIZE} days per page.
+                  </p>
+                  {dayWisePnl.length === 0 ? (
+                    <div className="empty-state">No closed trades found for the selected period.</div>
+                  ) : (
+                    <>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '2px solid var(--border, #ddd)', textAlign: 'left' }}>
+                              <th style={{ padding: '8px 12px' }}>Date</th>
+                              <th style={{ padding: '8px 12px', textAlign: 'center' }}>Trades</th>
+                              <th style={{ padding: '8px 12px', textAlign: 'center' }}>Wins</th>
+                              <th style={{ padding: '8px 12px', textAlign: 'center' }}>Losses</th>
+                              <th style={{ padding: '8px 12px', textAlign: 'center' }}>Win %</th>
+                              <th style={{ padding: '8px 12px', textAlign: 'right' }}>Realized P&L</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pageRows.map((row, idx) => (
+                              <tr
+                                key={row.date}
+                                style={{
+                                  borderBottom: '1px solid var(--border, #eee)',
+                                  background: idx % 2 === 0 ? 'transparent' : 'var(--surface-2, rgba(0,0,0,0.02))',
+                                }}
+                              >
+                                <td style={{ padding: '8px 12px', fontWeight: 500 }}>
+                                  {new Date(row.date + 'T12:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}
+                                </td>
+                                <td style={{ padding: '8px 12px', textAlign: 'center' }}>{row.trades}</td>
+                                <td style={{ padding: '8px 12px', textAlign: 'center', color: 'var(--color-buy, #22c55e)' }}>{row.wins}</td>
+                                <td style={{ padding: '8px 12px', textAlign: 'center', color: 'var(--color-sell, #ef4444)' }}>{row.losses}</td>
+                                <td style={{ padding: '8px 12px', textAlign: 'center' }} className={row.winPct >= 50 ? 'side-buy' : 'side-sell'}>
+                                  {row.winPct.toFixed(0)}%
+                                </td>
+                                <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }} className={pnlColor(row.pnl)}>
+                                  {row.pnl >= 0 ? '+' : ''}₹{row.pnl.toFixed(0)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr style={{ borderTop: '2px solid var(--border, #ddd)', fontWeight: 700, background: 'var(--surface-2, rgba(0,0,0,0.03))' }}>
+                              <td style={{ padding: '8px 12px' }}>All {dayWisePnl.length} days</td>
+                              <td style={{ padding: '8px 12px', textAlign: 'center' }}>{totalTrades}</td>
+                              <td style={{ padding: '8px 12px', textAlign: 'center', color: 'var(--color-buy, #22c55e)' }}>{totalWins}</td>
+                              <td style={{ padding: '8px 12px', textAlign: 'center', color: 'var(--color-sell, #ef4444)' }}>{totalLosses}</td>
+                              <td style={{ padding: '8px 12px', textAlign: 'center' }} className={overallWinPct >= 50 ? 'side-buy' : 'side-sell'}>
+                                {totalTrades ? `${overallWinPct.toFixed(0)}%` : '—'}
+                              </td>
+                              <td style={{ padding: '8px 12px', textAlign: 'right' }} className={pnlColor(totalPnl)}>
+                                {totalPnl >= 0 ? '+' : ''}₹{totalPnl.toFixed(0)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+
+                      {totalDayPages > 1 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', justifyContent: 'center' }}>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => setDailyPnlPage(0)}
+                            disabled={safePage === 0}
+                          >
+                            « First
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => setDailyPnlPage((p) => Math.max(0, p - 1))}
+                            disabled={safePage === 0}
+                          >
+                            ‹ Prev
+                          </button>
+                          <span className="metric-meta">
+                            Page {safePage + 1} of {totalDayPages}
+                          </span>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => setDailyPnlPage((p) => Math.min(totalDayPages - 1, p + 1))}
+                            disabled={safePage >= totalDayPages - 1}
+                          >
+                            Next ›
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => setDailyPnlPage(totalDayPages - 1)}
+                            disabled={safePage >= totalDayPages - 1}
+                          >
+                            Last »
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              );
+            })()
+          )}
+        </section>
+      </>
+    );
+  };
+
   const pageContent = () => {
     if (page === 'dashboard') return renderDashboard();
     if (page === 'orders') return renderOrders();
+    if (page === 'trades') return renderTrades();
     if (page === 'watchlist') return renderWatchlist();
     if (page === 'stocks') return renderStocks();
     if (page === 'wallet') return renderWallet();
