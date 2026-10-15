@@ -4,12 +4,26 @@ export interface ApiResponse<T> {
   message?: string;
 }
 
+export interface TokenRenewalStatus {
+  autoRequestEnabled: boolean;
+  scheduledTimeIst: string;
+  state: 'IDLE' | 'AWAITING_APPROVAL' | 'FAILED';
+  lastRequestAt: string | null;
+  approvalExpiresAt: string | null;
+  attemptsToday: number;
+  maxAttemptsPerDay: number;
+  lastTrigger: string | null;
+  lastError: string | null;
+}
+
 export interface AuthStatus {
   connected: boolean;
+  expired?: boolean;
   expiresAt: string | null;
   tokenType: string | null;
   scope: string | null;
   source?: 'database' | 'env' | 'none';
+  renewal?: TokenRenewalStatus;
 }
 
 export interface UnderlyingInstrument {

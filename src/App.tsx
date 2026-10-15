@@ -17,6 +17,7 @@ import {
   StrategyPosition,
   StrategyStatus,
   TradeHistoryEntry,
+  TokenRenewalStatus,
   TradeIntent,
   TradeOrder,
   TradeSummaryStats,
@@ -85,6 +86,16 @@ const wsLabel = (status: string): string => {
   if (status === 'closed') return 'Closed';
   if (status === 'error') return 'Error';
   return 'Idle';
+};
+
+const renewalLabel = (renewal: TokenRenewalStatus): string => {
+  if (renewal.state === 'AWAITING_APPROVAL') {
+    return `Approval sent ${formatDateTime(renewal.lastRequestAt)}. Tap Approve in the Upstox app / WhatsApp`;
+  }
+  if (renewal.state === 'FAILED') return `Token request failed: ${renewal.lastError ?? 'unknown error'}`;
+  return renewal.autoRequestEnabled
+    ? `Auto approval request on weekdays at ${renewal.scheduledTimeIst} IST`
+    : 'Auto approval request is off';
 };
 
 const parseErrorMessage = (error: unknown): string => {
@@ -552,6 +563,43 @@ const App = () => {
       setBusy(false);
     }
   };
+
+  const requestTokenApproval = async () => {
+    setBusy(true);
+    setError(null);
+
+    try {
+      const renewal = await tradingApi.requestTokenApproval();
+      setAuthStatus((previous) => ({ ...previous, renewal }));
+      setNotice('Approval request sent. Tap Approve in the Upstox app or WhatsApp. This page connects by itself once approved.');
+    } catch (caughtError) {
+      setError(parseErrorMessage(caughtError));
+      // Show the failure reason in the Connection card too
+      tradingApi.getAuthStatus().then(setAuthStatus).catch(() => undefined);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // While an approval request is pending, poll until Upstox delivers the token to the webhook
+  const awaitingApproval = !authStatus.connected && authStatus.renewal?.state === 'AWAITING_APPROVAL';
+  useEffect(() => {
+    if (!awaitingApproval) return;
+
+    const timer = window.setInterval(() => {
+      tradingApi.getAuthStatus()
+        .then((status) => {
+          setAuthStatus(status);
+          if (status.connected) {
+            setNotice('Upstox connected via app approval.');
+            void loadDashboard(false);
+          }
+        })
+        .catch(() => undefined);
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [awaitingApproval, loadDashboard]);
 
   const changeUnderlying = async (symbol: string) => {
     setBusy(true);
@@ -1022,6 +1070,9 @@ const App = () => {
             tone={statusTone(authStatus.connected)}
           />
           <p className="metric-meta">Expires: {formatDateTime(authStatus.expiresAt)}</p>
+          {!authStatus.connected && authStatus.renewal ? (
+            <p className="metric-meta">{renewalLabel(authStatus.renewal)}</p>
+          ) : null}
         </div>
 
         <div className="metric-card">
@@ -1779,9 +1830,18 @@ const App = () => {
             </label>
 
             {!authStatus.connected ? (
-              <button className="btn btn-primary" onClick={connectUpstox} disabled={busy}>
-                Connect Upstox OAuth
-              </button>
+              <>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => void requestTokenApproval()}
+                  disabled={busy || awaitingApproval}
+                >
+                  {awaitingApproval ? 'Waiting for approval…' : 'Approve in Upstox app (no OTP)'}
+                </button>
+                <button className="btn btn-secondary" onClick={connectUpstox} disabled={busy}>
+                  Login with OTP
+                </button>
+              </>
             ) : null}
 
             <button className="btn btn-secondary" onClick={() => void refreshEverything()} disabled={busy}>

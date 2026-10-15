@@ -15,6 +15,7 @@ import {
   StockCatalogItem,
   StrategyPosition,
   StrategyStatus,
+  TokenRenewalStatus,
   TradeHistoryEntry,
   TradeIntent,
   TradeOrder,
@@ -64,6 +65,12 @@ export const tradingApi = {
 
   disconnect: async (): Promise<void> => {
     await client.delete('/api/auth/upstox/disconnect');
+  },
+
+  /** Sends the "approve access token" prompt to the Upstox app / WhatsApp (no OTP login). */
+  requestTokenApproval: async (): Promise<TokenRenewalStatus> => {
+    const response = await client.post<ApiResponse<TokenRenewalStatus>>('/api/auth/upstox/token-request');
+    return unwrap(response);
   },
 
   exchangeOAuthCode: async (code: string): Promise<AuthStatus> => {
