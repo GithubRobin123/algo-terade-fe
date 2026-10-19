@@ -1,6 +1,6 @@
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { OptionChain, OptionChainRow } from '../api/types';
-import { formatNumber, formatPrice, formatTime } from '../lib/format';
+import { OptionChain, OptionChainRow, OptionExpiryInfo } from '../api/types';
+import { formatExpiryDate, formatNumber, formatPrice, formatTime } from '../lib/format';
 
 export interface SelectedOption {
   instrumentKey: string;
@@ -14,6 +14,13 @@ interface OptionChainTableProps {
   spotPrice?: number | null;
   themeMode?: 'light' | 'dark';
   onSelectOption?: (option: SelectedOption) => void;
+  /** Header label while no chain is loaded */
+  symbol?: string;
+  loading?: boolean;
+  expiryInfo?: OptionExpiryInfo | null;
+  /** Expiry picked in the dropdown; null = nearest (live). Viewing only — never changes what the engine trades. */
+  selectedExpiry?: string | null;
+  onExpiryChange?: (expiry: string | null) => void;
 }
 
 const findAtmStrike = (rows: OptionChainRow[], price: number): number =>
@@ -28,6 +35,11 @@ export const OptionChainTable = ({
   spotPrice,
   themeMode = 'light',
   onSelectOption,
+  symbol,
+  loading = false,
+  expiryInfo,
+  selectedExpiry = null,
+  onExpiryChange,
 }: OptionChainTableProps) => {
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
   const atmRowRef = useRef<HTMLTableRowElement | null>(null);
@@ -67,8 +79,47 @@ export const OptionChainTable = ({
     [onSelectOption],
   );
 
+  const expiries = expiryInfo?.expiries ?? [];
+  const tradingExpiry = expiryInfo?.tradingExpiry ?? null;
+  const shownExpiry = selectedExpiry ?? chain?.expiryDate ?? expiryInfo?.nearestExpiry ?? null;
+
+  const expiryLabel = (expiry: string): string =>
+    formatExpiryDate(expiry) +
+    (expiry === expiryInfo?.today ? ' · expires today' : '') +
+    (expiry === tradingExpiry ? ' · trading' : '');
+
+  const header = (
+    <div className="panel-title-row option-chain-header">
+      <h3>{chain?.symbol ?? symbol ?? ''} Option Chain</h3>
+      <div className="option-chain-controls">
+        {expiries.length > 0 && onExpiryChange ? (
+          <select
+            className="expiry-select"
+            aria-label="Option chain expiry"
+            value={shownExpiry ?? expiries[0]}
+            onChange={(event) => onExpiryChange(event.target.value === expiries[0] ? null : event.target.value)}
+          >
+            {expiries.map((expiry) => (
+              <option key={expiry} value={expiry}>{expiryLabel(expiry)}</option>
+            ))}
+          </select>
+        ) : null}
+        {tradingExpiry && shownExpiry ? (
+          shownExpiry === tradingExpiry
+            ? <span className="expiry-tag expiry-tag-trading">Engine trades this expiry</span>
+            : <span className="expiry-tag expiry-tag-view">View only · engine trades {formatExpiryDate(tradingExpiry)}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+
   if (!chain || chain.rows.length === 0) {
-    return <div className="empty-state">Option chain data is not available yet.</div>;
+    return (
+      <div className="panel">
+        {header}
+        <div className="empty-state">{loading ? 'Loading option chain…' : 'Option chain data is not available yet.'}</div>
+      </div>
+    );
   }
 
   const liveSpot = spotPrice ?? chain.underlyingPrice;
@@ -155,16 +206,15 @@ export const OptionChainTable = ({
 
   return (
     <div className="panel">
-      <div className="panel-title-row">
-        <h3>{chain.symbol} Option Chain</h3>
-        <span className="option-chain-meta">
-          Expiry: {chain.expiryDate ?? '--'}&nbsp;|&nbsp;Spot:{' '}
-          <strong className="spot-price-label">{formatPrice(liveSpot)}</strong>
-          {atmStrike != null && (
-            <>&nbsp;|&nbsp;ATM: <strong className="atm-label">{formatNumber(atmStrike)}</strong></>
-          )}
-          &nbsp;|&nbsp;Snapshot: {formatTime(chain.snapshotTime)}
-        </span>
+      {header}
+      <div className="option-chain-meta option-chain-meta-row">
+        Expiry: {formatExpiryDate(chain.expiryDate)}&nbsp;|&nbsp;Spot:{' '}
+        <strong className="spot-price-label">{formatPrice(liveSpot)}</strong>
+        {atmStrike != null && (
+          <>&nbsp;|&nbsp;ATM: <strong className="atm-label">{formatNumber(atmStrike)}</strong></>
+        )}
+        &nbsp;|&nbsp;Snapshot: {formatTime(chain.snapshotTime)}
+        {loading ? <>&nbsp;|&nbsp;Updating…</> : null}
       </div>
 
       <div style={css.wrap}>

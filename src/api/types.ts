@@ -64,6 +64,16 @@ export interface OptionChain {
   rows: OptionChainRow[];
 }
 
+export interface OptionExpiryInfo {
+  symbol: string;
+  today: string;
+  expiries: string[];
+  nearestExpiry: string | null;
+  /** Expiry the engine buys: the nearest one, or the next one on expiry day */
+  tradingExpiry: string | null;
+  isExpiryDay: boolean;
+}
+
 export interface TradeOrder {
   id: number;
   provider: string;

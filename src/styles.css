@@ -575,6 +575,12 @@ h3 {
   color: color-mix(in srgb, var(--danger) 85%, var(--ink));
 }
 
+.banner-warning {
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  color: color-mix(in srgb, var(--warning) 80%, var(--ink));
+}
+
 /* ── Market Overview Header ────────────────────────────────── */
 .market-overview-header {
   display: flex;
@@ -1103,6 +1109,47 @@ h3 {
 .option-chain-meta {
   font-size: 0.8rem;
   opacity: 0.85;
+}
+
+/* Option chain header: expiry dropdown (view only) + which expiry the engine trades */
+.option-chain-header {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.option-chain-meta-row {
+  margin: -0.35rem 0 0.7rem;
+  color: var(--ink-soft);
+}
+.option-chain-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.expiry-select {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.55rem;
+  font: inherit;
+  font-size: 0.82rem;
+  max-width: 100%;
+}
+.option-chain-controls .expiry-tag {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.option-chain-controls .expiry-tag-trading {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: color-mix(in srgb, var(--success) 85%, var(--ink));
+}
+.option-chain-controls .expiry-tag-view {
+  background: color-mix(in srgb, var(--ink-soft) 14%, transparent);
+  color: var(--ink-soft);
 }
 
 .side-buy {

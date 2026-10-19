@@ -9,6 +9,7 @@ import {
   MarketOverviewItem,
   MarketTick,
   OptionChain,
+  OptionExpiryInfo,
   PositionUpdate,
   OrderCheckResult,
   PlaceOrderInput,
@@ -37,7 +38,7 @@ import { ChartMode, PriceChart } from './components/price-chart';
 import { StatusPill } from './components/status-pill';
 import { StrategyPanel } from './components/strategy-panel';
 import { useMarketStream } from './hooks/useMarketStream';
-import { formatDateTime, formatNumber, formatPrice, formatTradeOptionLabel } from './lib/format';
+import { formatDateTime, formatExpiryDate, formatNumber, formatPrice, formatTradeOptionLabel } from './lib/format';
 
 const HISTORY_LIMIT = 300;
 const THEME_STORAGE_KEY = 'upstox-dashboard-theme';
@@ -166,6 +167,11 @@ const App = () => {
   const [latestTick, setLatestTick] = useState<MarketTick | null>(null);
   const [tickHistory, setTickHistory] = useState<MarketTick[]>([]);
   const [optionChain, setOptionChain] = useState<OptionChain | null>(null);
+  // Expiry dropdown is view only: the engine's expiry (tradingExpiry) is decided by the backend
+  const [expiryInfo, setExpiryInfo] = useState<Record<string, OptionExpiryInfo>>({});
+  const [selectedExpiry, setSelectedExpiry] = useState<string | null>(null); // null = nearest, live
+  const [expiryChain, setExpiryChain] = useState<OptionChain | null>(null);
+  const [expiryChainLoading, setExpiryChainLoading] = useState(false);
   const [orders, setOrders] = useState<TradeOrder[]>([]);
   const [intents, setIntents] = useState<TradeIntent[]>([]);
   const [strategyStatus, setStrategyStatus] = useState<StrategyStatus | null>(null);
@@ -434,6 +440,53 @@ const App = () => {
     const timer = setInterval(() => { void refreshStrategyData(); }, 30_000);
     return () => clearInterval(timer);
   }, [authStatus.connected, refreshStrategyData]);
+
+  // ── Option chain expiries (dropdown) + expiry-day banner ─────────────────
+  const activeSymbol = activeUnderlying?.symbol ?? null;
+  const chainSymbol = optionChain?.symbol ?? activeSymbol;
+
+  useEffect(() => {
+    if (!authStatus.connected) return;
+    const symbols = Array.from(new Set([activeSymbol, chainSymbol])).filter((s): s is string => Boolean(s));
+    const load = () => {
+      for (const symbol of symbols) {
+        tradingApi.getOptionExpiries(symbol)
+          .then((info) => setExpiryInfo((prev) => ({ ...prev, [symbol]: info })))
+          .catch(() => undefined);
+      }
+    };
+    load();
+    // Re-check so the banner follows the date; the server caches the expiry list for the day
+    const timer = window.setInterval(load, 5 * 60_000);
+    return () => window.clearInterval(timer);
+  }, [authStatus.connected, activeSymbol, chainSymbol]);
+
+  useEffect(() => {
+    setSelectedExpiry(null);
+    setExpiryChain(null);
+  }, [chainSymbol]);
+
+  useEffect(() => {
+    if (!selectedExpiry || !chainSymbol || !authStatus.connected) return;
+    let cancelled = false;
+    const load = () => {
+      setExpiryChainLoading(true);
+      tradingApi.getOptionChain({ symbol: chainSymbol, expiryDate: selectedExpiry, refresh: true })
+        .then((chain) => { if (!cancelled) setExpiryChain(chain); })
+        .catch((caughtError) => { if (!cancelled) setError(parseErrorMessage(caughtError)); })
+        .finally(() => { if (!cancelled) setExpiryChainLoading(false); });
+    };
+    load();
+    // The live stream only carries the nearest expiry, so refresh a chosen week while the market is open
+    const timer = marketOpen ? window.setInterval(load, 30_000) : undefined;
+    return () => {
+      cancelled = true;
+      setExpiryChainLoading(false);
+      window.clearInterval(timer);
+    };
+  }, [selectedExpiry, chainSymbol, authStatus.connected, marketOpen]);
+
+  const activeExpiryInfo = activeSymbol ? expiryInfo[activeSymbol] : undefined;
 
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
@@ -1038,6 +1091,10 @@ const App = () => {
   const renderDashboard = () => {
     const viewingItem = marketOverview.find((m) => m.symbol === viewingSymbol) ?? null;
     const viewingDisplayName = viewingItem?.displayName ?? viewingSymbol;
+    // A week picked in the dropdown shows only once its chain has loaded
+    const shownChain = selectedExpiry
+      ? (expiryChain?.expiryDate === selectedExpiry ? expiryChain : null)
+      : optionChain;
     return (
     <>
       {/* ── Market Overview Tiles ── */}
@@ -1108,10 +1165,15 @@ const App = () => {
 
       <section>
         <OptionChainTable
-          chain={optionChain}
-          spotPrice={latestTick?.ltp ?? optionChain?.underlyingPrice}
+          chain={shownChain}
+          spotPrice={latestTick?.ltp ?? shownChain?.underlyingPrice}
           themeMode={gridThemeMode}
           onSelectOption={setSelectedOption}
+          symbol={chainSymbol ?? undefined}
+          loading={expiryChainLoading}
+          expiryInfo={chainSymbol ? expiryInfo[chainSymbol] : null}
+          selectedExpiry={selectedExpiry}
+          onExpiryChange={setSelectedExpiry}
         />
         {selectedOption && (
           <OptionInstrumentPanel
@@ -1888,6 +1950,13 @@ const App = () => {
           </div>
         </section>
 
+        {activeExpiryInfo?.isExpiryDay ? (
+          <div className="banner banner-warning">
+            {activeExpiryInfo.tradingExpiry
+              ? `Today (${formatExpiryDate(activeExpiryInfo.today)}) is ${activeExpiryInfo.symbol} expiry. The engine trades the next expiry, ${formatExpiryDate(activeExpiryInfo.tradingExpiry)}, today. Contracts expiring today are not bought.`
+              : `Today is ${activeExpiryInfo.symbol} expiry and no later expiry is listed, so the engine takes no trades today.`}
+          </div>
+        ) : null}
         {notice ? <div className="banner banner-success">{notice}</div> : null}
         {error ? <div className="banner banner-error">{error}</div> : null}
 

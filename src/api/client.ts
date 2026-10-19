@@ -8,6 +8,7 @@ import {
   MarketOverviewItem,
   MarketTick,
   OptionChain,
+  OptionExpiryInfo,
   OrderCheckResult,
   PlaceIntentInput,
   PlaceOrderInput,
@@ -118,6 +119,13 @@ export const tradingApi = {
   }): Promise<OptionChain> => {
     const response = await client.get<ApiResponse<OptionChain>>('/api/market/nifty/option-chain', {
       params,
+    });
+    return unwrap(response);
+  },
+
+  getOptionExpiries: async (symbol?: string): Promise<OptionExpiryInfo> => {
+    const response = await client.get<ApiResponse<OptionExpiryInfo>>('/api/market/nifty/option-expiries', {
+      params: { symbol },
     });
     return unwrap(response);
   },

@@ -42,6 +42,21 @@ export const formatDateTime = (isoTime: string | null): string => {
   }).format(date);
 };
 
+/** Option expiry "2026-10-27" → "27 Oct 2026" */
+export const formatExpiryDate = (isoDate: string | null | undefined): string => {
+  if (!isoDate) {
+    return '--';
+  }
+
+  const [year, month, day] = isoDate.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(Date.UTC(year, month - 1, day)));
+};
+
 /**
  * Formats a live/open position symbol into a human-readable option label.
  * symbol is stored as "NIFTY-CE" or "NIFTY-PE".
