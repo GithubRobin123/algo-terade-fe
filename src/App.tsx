@@ -1435,6 +1435,7 @@ const App = () => {
       if (!r) return '—';
       if (r === 'STOP_LOSS_HIT') return 'SL Hit';
       if (r === 'TRAIL_STOP_HIT') return 'Trail Stop';
+      if (r === 'BREAKEVEN_STOP_HIT') return 'Breakeven';
       if (r === 'TARGET_HIT') return 'Target Hit';
       if (r === 'EOD_SQUAREOFF') return 'EOD Close';
       if (r === 'EOD_SQUAREOFF_FORCED') return 'EOD Forced';
