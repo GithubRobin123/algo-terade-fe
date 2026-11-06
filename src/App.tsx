@@ -571,14 +571,16 @@ const App = () => {
   );
 
   const dayWisePnl = useMemo(() => {
-    type DayRow = { date: string; trades: number; wins: number; losses: number; pnl: number; winPct: number };
+    type DayRow = { date: string; trades: number; wins: number; losses: number; pnl: number; charges: number; netPnl: number; winPct: number };
     const map = new Map<string, DayRow>();
     for (const t of tradeHistory) {
       if (t.status !== 'CLOSED' || t.realizedPnl === null || !t.closedAt) continue;
       const day = new Date(t.closedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-      const row: DayRow = map.get(day) ?? { date: day, trades: 0, wins: 0, losses: 0, pnl: 0, winPct: 0 };
+      const row: DayRow = map.get(day) ?? { date: day, trades: 0, wins: 0, losses: 0, pnl: 0, charges: 0, netPnl: 0, winPct: 0 };
       row.trades += 1;
       row.pnl += Number(t.realizedPnl);
+      row.charges += Number(t.charges ?? 0);
+      row.netPnl = row.pnl - row.charges;
       if (Number(t.realizedPnl) > 0) row.wins += 1; else row.losses += 1;
       row.winPct = row.trades ? (row.wins / row.trades) * 100 : 0;
       map.set(day, row);
@@ -1450,6 +1452,14 @@ const App = () => {
       return '';
     };
 
+    // Best price the option reached while the trade was open (BUY: highest, SELL: lowest),
+    // so a trade that ran 10 → 21 but exited at 17 shows how much was left on the table.
+    const peakMove = (t: TradeHistoryEntry | undefined) => {
+      if (!t || !(t.bestPrice > 0) || !(t.entryPrice > 0)) return null;
+      const perUnit = t.side === 'SELL' ? t.entryPrice - t.bestPrice : t.bestPrice - t.entryPrice;
+      return { pct: (perUnit / t.entryPrice) * 100, pnl: perUnit * t.quantity };
+    };
+
     const tradeHistoryColDefs: ColDef<TradeHistoryEntry>[] = [
       { headerName: 'Date', field: 'openedAt', width: 140, valueFormatter: (p) => p.value ? new Date(p.value as string).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—' },
       { headerName: 'Strategy', field: 'strategy', width: 150, valueFormatter: (p) => (p.value as string | null) ?? '—' },
@@ -1463,10 +1473,49 @@ const App = () => {
       { headerName: 'Type', field: 'optionType', width: 70, valueFormatter: (p) => { const v = p.value as string | null; return v === 'CALL' ? 'CE' : v === 'PUT' ? 'PE' : (v ?? '—'); } },
       { headerName: 'Entry ₹', field: 'entryPrice', width: 90, valueFormatter: (p) => `₹${Number(p.value).toFixed(1)}` },
       { headerName: 'Exit ₹', field: 'exitPrice', width: 90, valueFormatter: (p) => p.value != null ? `₹${Number(p.value).toFixed(1)}` : '—' },
+      {
+        headerName: 'Max ₹',
+        field: 'bestPrice',
+        width: 90,
+        headerTooltip: 'Best option price reached while the trade was open',
+        valueFormatter: (p) => Number(p.value) > 0 ? `₹${Number(p.value).toFixed(1)}` : '—',
+      },
+      {
+        headerName: 'Max %',
+        width: 85,
+        headerTooltip: 'Best % profit reached while the trade was open',
+        valueGetter: (p) => peakMove(p.data)?.pct ?? null,
+        cellClass: (p) => pnlColor(p.value as number | null),
+        valueFormatter: (p) => p.value != null ? `${Number(p.value).toFixed(1)}%` : '—',
+      },
+      {
+        headerName: 'Max P&L ₹',
+        width: 105,
+        headerTooltip: 'Best open P&L reached; compare with P&L ₹ to see how much was given back',
+        valueGetter: (p) => peakMove(p.data)?.pnl ?? null,
+        cellClass: (p) => pnlColor(p.value as number | null),
+        valueFormatter: (p) => p.value != null ? `₹${Number(p.value).toFixed(0)}` : '—',
+        tooltipValueGetter: (p) => {
+          const peak = peakMove(p.data);
+          if (!peak || p.data?.realizedPnl == null) return '';
+          return `Gave back ₹${(peak.pnl - Number(p.data.realizedPnl)).toFixed(0)} from the best point`;
+        },
+      },
       { headerName: 'SL ₹', field: 'stopLossPrice', width: 90, valueFormatter: (p) => `₹${Number(p.value).toFixed(1)}` },
       { headerName: 'Target ₹', field: 'targetPrice', width: 90, valueFormatter: (p) => `₹${Number(p.value).toFixed(1)}` },
       { headerName: 'P&L ₹', field: 'realizedPnl', width: 100, cellClass: (p) => pnlColor(p.value as number | null), valueFormatter: (p) => p.value != null ? `₹${Number(p.value).toFixed(0)}` : '—' },
       { headerName: 'P&L %', field: 'pnlPct', width: 85, cellClass: (p) => pnlColor(p.value as number | null), valueFormatter: (p) => p.value != null ? `${Number(p.value).toFixed(1)}%` : '—' },
+      {
+        headerName: 'Charges ₹', field: 'charges', width: 95,
+        headerTooltip: 'Estimated brokerage + STT + exchange + GST + stamp duty for the round trip',
+        valueFormatter: (p) => p.value != null ? `₹${Number(p.value).toFixed(0)}` : '—',
+      },
+      {
+        headerName: 'Net P&L ₹', field: 'netPnl', width: 105,
+        headerTooltip: 'P&L after estimated charges (what real money would have made)',
+        cellClass: (p) => pnlColor(p.value as number | null),
+        valueFormatter: (p) => p.value != null ? `₹${Number(p.value).toFixed(0)}` : '—',
+      },
       { headerName: 'Exit Reason', field: 'exitReason', width: 130, valueFormatter: (p) => exitReasonLabel(p.value as string | null) },
       { headerName: 'Status', field: 'status', width: 80 },
       { headerName: 'Trail', field: 'trailActive', width: 65, valueFormatter: (p) => (p.value as boolean) ? 'Yes' : 'No' },
@@ -1533,6 +1582,12 @@ const App = () => {
             <p className="metric-meta">
               Avg Win: ₹{tradeSummary ? tradeSummary.avgWin.toFixed(0) : '—'} · Avg Loss: ₹{tradeSummary ? tradeSummary.avgLoss.toFixed(0) : '—'}
             </p>
+            {tradeSummary?.totalNetPnl != null && (
+              <p className="metric-meta">
+                After charges: <span className={pnlColor(tradeSummary.totalNetPnl)}>₹{tradeSummary.totalNetPnl.toFixed(0)}</span>
+                {' '}(charges ₹{(tradeSummary.totalCharges ?? 0).toFixed(0)})
+              </p>
+            )}
           </div>
           <div className="metric-card">
             <p className="metric-label">Strategy Breakdown</p>
@@ -1664,6 +1719,8 @@ const App = () => {
               const safePage = Math.min(dailyPnlPage, Math.max(0, totalDayPages - 1));
               const pageRows = dayWisePnl.slice(safePage * DAILY_PNL_PAGE_SIZE, (safePage + 1) * DAILY_PNL_PAGE_SIZE);
               const totalPnl = dayWisePnl.reduce((s, r) => s + r.pnl, 0);
+              const totalCharges = dayWisePnl.reduce((s, r) => s + r.charges, 0);
+              const totalNetPnl = totalPnl - totalCharges;
               const totalTrades = dayWisePnl.reduce((s, r) => s + r.trades, 0);
               const totalWins = dayWisePnl.reduce((s, r) => s + r.wins, 0);
               const totalLosses = dayWisePnl.reduce((s, r) => s + r.losses, 0);
@@ -1692,6 +1749,8 @@ const App = () => {
                               <th style={{ padding: '8px 12px', textAlign: 'center' }}>Losses</th>
                               <th style={{ padding: '8px 12px', textAlign: 'center' }}>Win %</th>
                               <th style={{ padding: '8px 12px', textAlign: 'right' }}>Realized P&L</th>
+                              <th style={{ padding: '8px 12px', textAlign: 'right' }} title="Estimated brokerage + taxes">Charges</th>
+                              <th style={{ padding: '8px 12px', textAlign: 'right' }} title="Realized P&L after estimated charges">Net P&L</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1715,6 +1774,10 @@ const App = () => {
                                 <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }} className={pnlColor(row.pnl)}>
                                   {row.pnl >= 0 ? '+' : ''}₹{row.pnl.toFixed(0)}
                                 </td>
+                                <td style={{ padding: '8px 12px', textAlign: 'right' }}>₹{row.charges.toFixed(0)}</td>
+                                <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }} className={pnlColor(row.netPnl)}>
+                                  {row.netPnl >= 0 ? '+' : ''}₹{row.netPnl.toFixed(0)}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -1729,6 +1792,10 @@ const App = () => {
                               </td>
                               <td style={{ padding: '8px 12px', textAlign: 'right' }} className={pnlColor(totalPnl)}>
                                 {totalPnl >= 0 ? '+' : ''}₹{totalPnl.toFixed(0)}
+                              </td>
+                              <td style={{ padding: '8px 12px', textAlign: 'right' }}>₹{totalCharges.toFixed(0)}</td>
+                              <td style={{ padding: '8px 12px', textAlign: 'right' }} className={pnlColor(totalNetPnl)}>
+                                {totalNetPnl >= 0 ? '+' : ''}₹{totalNetPnl.toFixed(0)}
                               </td>
                             </tr>
                           </tfoot>

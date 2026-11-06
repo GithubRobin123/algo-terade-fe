@@ -54,6 +54,10 @@ export const LivePnlPanel = ({ positions, onClosePosition, busy = false }: LiveP
           const localPnl = pos.side === 'BUY'
             ? (current - entry) * pos.quantity
             : (entry - current) * pos.quantity;
+          const best = pos.bestPrice > 0 ? pos.bestPrice : null;
+          const bestPct = best != null && entry > 0
+            ? ((best - entry) / entry) * 100 * (pos.side === 'BUY' ? 1 : -1)
+            : null;
 
           const meta = pos.metadata as Record<string, unknown>;
           const optionLabel = formatOptionLabel(pos.symbol, meta);
@@ -80,6 +84,14 @@ export const LivePnlPanel = ({ positions, onClosePosition, busy = false }: LiveP
               <div className="pnl-prices">
                 <span>Entry <strong>{formatPrice(pos.entryPrice)}</strong></span>
                 <span>LTP <strong>{formatPrice(pos.currentPrice)}</strong></span>
+                {best != null && (
+                  <span title="Best price reached since entry">
+                    Max <strong>{formatPrice(best)}</strong>
+                    {bestPct != null && (
+                      <span className={pnlClass(bestPct)}> ({bestPct >= 0 ? '+' : ''}{formatNumber(bestPct)}%)</span>
+                    )}
+                  </span>
+                )}
               </div>
 
               <div className="pnl-value-row">

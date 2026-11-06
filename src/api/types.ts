@@ -376,6 +376,10 @@ export interface TradeHistoryEntry {
   targetPrice: number;
   exitReason: string | null;
   realizedPnl: number | null;
+  /** Estimated brokerage + taxes of the round trip (closed trades; backend v2.3+) */
+  charges?: number | null;
+  /** realizedPnl − charges */
+  netPnl?: number | null;
   pnlPct: number | null;
   confidence: number | null;
   rationale: string | null;
@@ -415,6 +419,9 @@ export interface TradeSummaryStats {
   losses: number;
   winRatePct: number;
   totalRealizedPnl: number;
+  /** Estimated charges of the closed trades and the P&L after them (backend v2.3+) */
+  totalCharges?: number;
+  totalNetPnl?: number;
   avgWin: number;
   avgLoss: number;
   strategyBreakdown: Record<string, { trades: number; pnl: number; wins: number }>;

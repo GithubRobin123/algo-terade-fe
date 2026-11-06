@@ -61,6 +61,12 @@ export const PositionTable = ({
         valueFormatter: (params) => formatPrice(params.value as number | null),
       },
       {
+        headerName: 'Max',
+        field: 'bestPrice',
+        headerTooltip: 'Best option price reached while the position was open',
+        valueFormatter: (params) => Number(params.value) > 0 ? formatPrice(params.value as number) : '—',
+      },
+      {
         headerName: 'SL',
         field: 'stopLossPrice',
         valueFormatter: (params) => formatPrice(params.value as number | null),
